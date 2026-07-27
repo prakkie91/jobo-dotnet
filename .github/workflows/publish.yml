@@ -1,49 +1,65 @@
-name: Publish to NuGet
+name: Release
 
+# Merging a version bump is the release. Every push to main reads the version
+# out of Jobo.Enterprise.Client.csproj and compares it with NuGet: unchanged
+# means there is nothing to do, new means test, publish, and tag. No tag to cut
+# by hand, and the csproj stays the single source of truth for the version.
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Package version override (leave empty to use csproj version)"
-        required: false
-        type: string
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.published.outputs.publish }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
+      - name: Read version from csproj
+        id: version
+        run: |
+          VERSION=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Jobo.Enterprise.Client.csproj | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read <Version> from Jobo.Enterprise.Client.csproj"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Restore test dependencies
-        run: dotnet restore Tests/Jobo.Enterprise.Client.Tests.csproj
+      - name: Is it already on NuGet?
+        id: published
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # The flat container index lists every published version, lowercased id.
+          if curl -sS "https://api.nuget.org/v3-flatcontainer/jobo.enterprise.client/index.json" \
+            | jq -e --arg v "$VERSION" '.versions | index($v)' >/dev/null; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$VERSION is already on NuGet — nothing to release."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$VERSION is not on NuGet — releasing."
+          fi
 
-      - name: Build tests
-        run: dotnet build Tests/Jobo.Enterprise.Client.Tests.csproj --configuration Release --no-restore
+  test:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    # Reuses the Tests workflow rather than restating it, so there is one
+    # definition of what "the tests pass" means.
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
 
-      - name: Run integration tests
-        run: dotnet test Tests/Jobo.Enterprise.Client.Tests.csproj --configuration Release --no-build --verbosity normal
-        env:
-          JOBO_API_KEY: ${{ secrets.JOBO_API_KEY }}
-
-  build-and-publish:
-    needs: test
+  publish:
+    needs: [check, test]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
-
+      contents: write # create the release tag
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,21 +77,23 @@ jobs:
       - name: Build
         run: dotnet build --configuration Release --no-restore
 
-      - name: Determine version
-        id: version
-        run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "release" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-            echo "version=${TAG#v}" >> $GITHUB_OUTPUT
-          else
-            VERSION=$(grep -oP '<Version>\K[^<]+' Jobo.Enterprise.Client.csproj)
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-          fi
-
+      # No -p:PackageVersion override: the csproj already carries the version
+      # this job verified against NuGet.
       - name: Pack
-        run: dotnet pack --configuration Release --no-build -p:PackageVersion=${{ steps.version.outputs.version }} --output ./nupkg
+        run: dotnet pack --configuration Release --no-build --output ./nupkg
 
       - name: Push to NuGet
-        run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: |
+          dotnet nuget push ./nupkg/*.nupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      # Only after the registry has it, so a failed publish leaves no tag behind.
+      - name: Tag the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ needs.check.outputs.version }}" \
+            --title "v${{ needs.check.outputs.version }}" \
+            --generate-notes

@@ -9,7 +9,6 @@ namespace Jobo.Enterprise.Client;
 ///   <item><see cref="Search"/> — Full-text job search with filters</item>
 ///   <item><see cref="Companies"/> — Enriched company profiles and per-company job listings</item>
 ///   <item><see cref="Locations"/> — Geocoding and location resolution</item>
-///   <item><see cref="AutoApply"/> — Automated job application form filling</item>
 /// </list>
 /// </para>
 /// Implements <see cref="IDisposable"/> to clean up the underlying <see cref="HttpClient"/>.
@@ -40,11 +39,6 @@ public sealed class JoboClient : IDisposable
     public LocationsClient Locations { get; }
 
     /// <summary>
-    /// Automated job application form filling.
-    /// </summary>
-    public AutoApplyClient AutoApply { get; }
-
-    /// <summary>
     /// Creates a new <see cref="JoboClient"/> with the specified options.
     /// </summary>
     public JoboClient(JoboClientOptions options)
@@ -52,23 +46,25 @@ public sealed class JoboClient : IDisposable
         _httpClient = new HttpClient
         {
             BaseAddress = new Uri(options.BaseUrl.TrimEnd('/')),
-            Timeout = options.Timeout
+            // Timeouts are enforced per request instead, so the feed routes can
+            // outlast the shorter default without raising it for everything.
+            Timeout = System.Threading.Timeout.InfiniteTimeSpan
         };
         _httpClient.DefaultRequestHeaders.Add("X-Api-Key", options.ApiKey);
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", "jobo-dotnet/3.0.0");
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "jobo-dotnet/4.0.0");
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
         _ownsHttpClient = true;
 
-        Feed = new JobsFeedClient(_httpClient);
-        Search = new JobsSearchClient(_httpClient);
-        Companies = new CompaniesClient(_httpClient);
-        Locations = new LocationsClient(_httpClient);
-        AutoApply = new AutoApplyClient(_httpClient);
+        Feed = new JobsFeedClient(_httpClient, options.Timeout, options.FeedTimeout);
+        Search = new JobsSearchClient(_httpClient, options.Timeout);
+        Companies = new CompaniesClient(_httpClient, options.Timeout);
+        Locations = new LocationsClient(_httpClient, options.Timeout);
     }
 
     /// <summary>
     /// Creates a new <see cref="JoboClient"/> using an existing <see cref="HttpClient"/>.
-    /// The caller is responsible for configuring headers and base address.
+    /// The caller is responsible for configuring headers, base address, and
+    /// timeouts — note the feed endpoints want at least 120 seconds.
     /// </summary>
     public JoboClient(HttpClient httpClient)
     {
@@ -79,7 +75,6 @@ public sealed class JoboClient : IDisposable
         Search = new JobsSearchClient(_httpClient);
         Companies = new CompaniesClient(_httpClient);
         Locations = new LocationsClient(_httpClient);
-        AutoApply = new AutoApplyClient(_httpClient);
     }
 
     public void Dispose()

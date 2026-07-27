@@ -333,30 +333,152 @@ public class IntegrationTests : IDisposable
         }
     }
 
-    // ── AutoApply (disabled – not yet implemented) ──────────────────
+    // ── Job by id ───────────────────────────────────────────────────
 
-    [Fact(Skip = "Auto Apply is not yet implemented")]
-    public async Task StartAutoApplySession_WithInvalidUrl_ReturnsError()
+    [Fact]
+    public async Task GetJob_ReturnsTheSameJob()
     {
-        if (_client is null) return;
+        if (_client is null) return; // skip
 
-        // Using an invalid URL should return success=false with an error
-        var response = await Client.AutoApply.StartSessionAsync("https://invalid-url-that-does-not-exist.com/jobs/123");
+        var search = await Client.Search.SearchAsync(q: "engineer", pageSize: 1);
+        if (search.Jobs.Count == 0) return; // no jobs to resolve an id
 
-        Assert.NotNull(response);
-        // The provider detection may fail or succeed - just check response structure
-        Assert.NotEqual(Guid.Empty, response.SessionId);
+        var expected = search.Jobs[0];
+        var job = await Client.Search.GetJobAsync(expected.Id);
+
+        Assert.Equal(expected.Id, job.Id);
+        Assert.Equal(expected.Title, job.Title);
     }
 
-    [Fact(Skip = "Auto Apply is not yet implemented")]
-    public async Task EndAutoApplySession_WithInvalidSession_ReturnsFalse()
+    [Fact]
+    public async Task GetJob_WithUnknownId_ThrowsNotFound()
     {
-        if (_client is null) return;
+        if (_client is null) return; // skip
 
-        var result = await Client.AutoApply.EndSessionAsync(Guid.NewGuid());
+        await Assert.ThrowsAsync<JoboNotFoundException>(
+            () => Client.Search.GetJobAsync(Guid.NewGuid()));
+    }
 
-        // Should return false for non-existent session
-        Assert.False(result);
+    // ── Managed feed ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetManagedJobs_ReturnsBatchOrRejectsTheKey()
+    {
+        if (_client is null) return; // skip
+
+        // Managed Job Scraping is per-account. A customer key with no managed
+        // sources returns an empty batch; a sandbox or marketplace key has no
+        // customer account at all and is rejected outright.
+        try
+        {
+            var response = await Client.Feed.GetManagedJobsAsync(new ManagedJobFeedRequest { BatchSize = 5 });
+            Assert.NotNull(response.Jobs);
+            Assert.True(response.Jobs.Count <= 5);
+        }
+        catch (JoboPermissionException)
+        {
+            // Key carries no customer account — managed feed not available.
+        }
+    }
+
+    // ── Canonical filter values ─────────────────────────────────────
+
+    [Fact]
+    public async Task EmploymentType_CarriesTheCanonicalWireValue()
+    {
+        if (_client is null) return; // skip
+
+        // The documented canonical spelling is hyphenated. (The index also
+        // happens to match the pre-4.0.0 underscored spelling, so this was a
+        // correctness fix rather than a broken filter.)
+        Assert.Equal("full-time", EmploymentType.FullTime);
+        Assert.Equal("part-time", EmploymentType.PartTime);
+
+        var response = await Client.Search.SearchAsync(employmentType: EmploymentType.FullTime, pageSize: 1);
+        Assert.True(response.Total > 0);
+    }
+
+    [Fact]
+    public async Task EmploymentType_ExposesFreelance()
+    {
+        if (_client is null) return; // skip
+
+        // Absent from the constants before 4.0.0 — callers had to pass the literal.
+        Assert.Equal("freelance", EmploymentType.Freelance);
+
+        var response = await Client.Search.SearchAsync(employmentType: EmploymentType.Freelance, pageSize: 1);
+        Assert.True(response.Total > 0);
+    }
+
+    [Fact]
+    public async Task ExperienceLevel_ExposesIntern()
+    {
+        if (_client is null) return; // skip
+
+        // Absent from the constants before 4.0.0.
+        Assert.Equal("intern", ExperienceLevel.Intern);
+
+        var response = await Client.Search.SearchAsync(experienceLevel: ExperienceLevel.Intern, pageSize: 1);
+        Assert.True(response.Total > 0);
+    }
+
+    // ── Field selection and incremental sync ────────────────────────
+
+    [Fact]
+    public async Task IncludeFields_IsAccepted()
+    {
+        if (_client is null) return; // skip
+
+        // Core fields are always returned whatever includeFields asks for. We do
+        // not assert that the heavy fields are dropped: the API currently returns
+        // them for an empty value, so that behaviour is not the client's to pin.
+        var response = await Client.Search.SearchAsync(q: "engineer", includeFields: "summary", pageSize: 1);
+        Assert.NotEmpty(response.Jobs);
+        Assert.False(string.IsNullOrEmpty(response.Jobs[0].Title));
+    }
+
+    [Fact]
+    public async Task Feed_AcceptsUpdatedAfterAndStableScan()
+    {
+        if (_client is null) return; // skip
+
+        var response = await Client.Feed.GetJobsAsync(new JobFeedRequest
+        {
+            UpdatedAfter = DateTime.UtcNow.AddHours(-6),
+            StableScan = true,
+            BatchSize = 5
+        });
+
+        Assert.NotNull(response.Jobs);
+        Assert.True(response.Jobs.Count <= 5);
+    }
+
+    [Fact]
+    public async Task EnumerateJobs_DoesNotMutateTheSuppliedRequest()
+    {
+        if (_client is null) return; // skip
+
+        var request = new JobFeedRequest { BatchSize = 2 };
+
+        var seen = 0;
+        await foreach (var job in Client.Feed.EnumerateJobsAsync(request))
+        {
+            Assert.NotNull(job);
+            if (++seen >= 3) break;
+        }
+
+        Assert.Null(request.Cursor);
+    }
+
+    [Fact]
+    public async Task ExpiredSince_IsOptional()
+    {
+        if (_client is null) return; // skip
+
+        var response = await Client.Feed.GetExpiredJobIdsAsync(batchSize: 5);
+
+        Assert.NotNull(response);
+        Assert.NotNull(response.JobIds);
     }
 
     public void Dispose()

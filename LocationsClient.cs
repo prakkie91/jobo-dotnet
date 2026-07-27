@@ -9,7 +9,8 @@ namespace Jobo.Enterprise.Client;
 /// </summary>
 public sealed class LocationsClient : JoboClientBase
 {
-    internal LocationsClient(HttpClient httpClient) : base(httpClient) { }
+    internal LocationsClient(HttpClient httpClient, TimeSpan? requestTimeout = null)
+        : base(httpClient, requestTimeout) { }
 
     /// <summary>
     /// Geocode a location string into structured locations with coordinates.

@@ -9,11 +9,11 @@
 
     <!-- NuGet Package Metadata -->
     <PackageId>Jobo.Enterprise.Client</PackageId>
-    <Version>3.0.0</Version>
+    <Version>4.0.0</Version>
     <Authors>Jobo</Authors>
     <Company>Jobo</Company>
-    <Description>Official .NET client library for the Jobo Enterprise API. Access millions of job listings from 45+ ATS platforms, geocode locations, and automate job applications. Organized by feature area: Jobs Feed, Search, Locations, and Auto Apply.</Description>
-    <PackageTags>jobo;jobs;api;enterprise;job-board;recruitment;ats;greenhouse;lever;workday;smartrecruiters;ashby;bamboohr;icims;job-scraper;job-listings;job-data;job-aggregator;job-feed;applicant-tracking-system;hiring;job-search-api;geocoding;auto-apply</PackageTags>
+    <Description>Official .NET client library for the Jobo Enterprise API. Access millions of job listings from 106 ATS platforms and job boards, look up enriched company profiles, and geocode locations. Organized by feature area: Jobs Feed, Search, Companies, and Locations.</Description>
+    <PackageTags>jobo;jobs;api;enterprise;job-board;recruitment;ats;greenhouse;lever;workday;smartrecruiters;ashby;bamboohr;icims;job-scraper;job-listings;job-data;job-aggregator;job-feed;applicant-tracking-system;hiring;job-search-api;geocoding;company-data</PackageTags>
     <PackageIcon>jobo-logo.png</PackageIcon>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://jobo.world/enterprise/</PackageProjectUrl>

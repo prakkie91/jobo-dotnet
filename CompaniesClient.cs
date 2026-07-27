@@ -9,7 +9,8 @@ namespace Jobo.Enterprise.Client;
 /// </summary>
 public sealed class CompaniesClient : JoboClientBase
 {
-    internal CompaniesClient(HttpClient httpClient) : base(httpClient) { }
+    internal CompaniesClient(HttpClient httpClient, TimeSpan? requestTimeout = null)
+        : base(httpClient, requestTimeout) { }
 
     /// <summary>
     /// Fetch a fully enriched company profile (GET /api/companies/{id}).

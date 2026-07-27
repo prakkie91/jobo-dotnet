@@ -2,7 +2,7 @@
 
 # Jobo Enterprise — .NET Client
 
-**Access millions of job listings, geocode locations, and automate job applications — all from a single API.**
+**Access millions of job listings, enriched company profiles, and geocoding — all from a single API.**
 
 [![NuGet](https://img.shields.io/nuget/v/Jobo.Enterprise.Client)](https://www.nuget.org/packages/Jobo.Enterprise.Client)
 [![.NET](https://img.shields.io/badge/.NET-6.0%20%7C%208.0-blue)](https://dotnet.microsoft.com/)
@@ -14,11 +14,10 @@
 
 | Sub-client          | Property           | Description                                              |
 | ------------------- | ------------------ | -------------------------------------------------------- |
-| **Jobs Feed**       | `client.Feed`      | Bulk job feed with cursor-based pagination (45+ ATS)     |
-| **Jobs Search**     | `client.Search`    | Full-text search with location, work-model, and source filters |
+| **Jobs Feed**       | `client.Feed`      | Bulk and managed job feeds with cursor-based pagination (106 ATS) |
+| **Jobs Search**     | `client.Search`    | Full-text search, filters, facets, and single-job lookup |
 | **Companies**       | `client.Companies` | Enriched company profiles and per-company job listings   |
 | **Locations**       | `client.Locations` | Geocode location strings into structured coordinates     |
-| **Auto Apply**      | `client.AutoApply` | Automate job applications: sessions, stored profiles, one-shot runs |
 
 > **Get your API key** → [enterprise.jobo.world/api-keys](https://enterprise.jobo.world/api-keys)
 
@@ -115,10 +114,44 @@ await foreach (var job in client.Feed.EnumerateJobsAsync(new JobFeedRequest
 }
 ```
 
-### Expired job IDs
+### Incremental sync
+
+After the initial backfill, set `UpdatedAfter` to pick up only what changed.
+Scans page by immutable creation time by default (`StableScan`), so records
+cannot shift across page boundaries while you are reading.
 
 ```csharp
-await foreach (var jobId in client.Feed.EnumerateExpiredJobIdsAsync(DateTime.UtcNow.AddDays(-1)))
+await foreach (var job in client.Feed.EnumerateJobsAsync(new JobFeedRequest
+{
+    UpdatedAfter = DateTime.UtcNow.AddHours(-1),
+    BatchSize = 1000
+}))
+{
+    await UpsertAsync(job);
+}
+```
+
+### Managed feed
+
+Jobs from the companies you configured through **Managed Job Scraping** in the
+Jobo portal. Same batch and cursor semantics, minus the locations filter.
+
+```csharp
+await foreach (var job in client.Feed.EnumerateManagedJobsAsync(new ManagedJobFeedRequest
+{
+    BatchSize = 1000
+}))
+{
+    await SaveToDatabaseAsync(job);
+}
+```
+
+### Expired job IDs
+
+The timestamp is optional and defaults to 24 hours ago. Maximum lookback is 7 days.
+
+```csharp
+await foreach (var jobId in client.Feed.EnumerateExpiredJobIdsAsync())
 {
     await MarkAsExpiredAsync(jobId);
 }
@@ -149,7 +182,27 @@ Console.WriteLine($"Found {results.Total} jobs across {results.TotalPages} pages
 > their known values as `const string` fields for discoverability — `WorkModel`,
 > `EmploymentType`, `ExperienceLevel`, `CompensationPeriod`, and `SkillType`.
 > The methods still take `string`, so passing the literal (e.g. `"remote"`) is
-> always valid too.
+> always valid too. Values are lowercase and hyphenated (`"full-time"`,
+> `"per-diem"`); the API matches them exactly, so a misspelt value simply
+> matches nothing.
+
+### Fetch one job
+
+```csharp
+var job = await client.Search.GetJobAsync(jobId);
+```
+
+Unmetered — this endpoint deducts no credits, which makes it a cheap way to wire
+up an integration.
+
+### Trim the payload
+
+Leave `includeFields` null for the whole job, pass a subset to keep only those
+heavy fields, or pass `""` for core fields only.
+
+```csharp
+var results = await client.Search.SearchAsync(q: "data scientist", includeFields: "summary", pageSize: 50);
+```
 
 ### Advanced search (multiple queries, filters & facets)
 
@@ -218,65 +271,20 @@ foreach (var location in result.Locations)
 
 ---
 
-## Auto Apply — `client.AutoApply`
+## Auto Apply
 
-Automate job applications with form field discovery and filling.
-
-### Interactive session flow
-
-```csharp
-// Start a session
-var session = await client.AutoApply.StartSessionAsync(job.ApplyUrl);
-
-Console.WriteLine($"Provider: {session.ProviderDisplayName}");
-Console.WriteLine($"Fields: {session.Fields.Count}");
-
-// Fill in fields — Type must match the discovered FormFieldInfo.Type
-var answers = new List<FieldAnswer>
-{
-    new() { FieldId = "first_name", Type = "text", Value = "John" },
-    new() { FieldId = "last_name", Type = "text", Value = "Doe" },
-    new() { FieldId = "email", Type = "text", Value = "john@example.com" },
-};
-
-var result = await client.AutoApply.SetAnswersAsync(session.SessionId, answers);
-
-if (result.IsTerminal)
-    Console.WriteLine("Application submitted!");
-
-// Clean up
-await client.AutoApply.EndSessionAsync(session.SessionId);
-```
-
-### Stored profiles & one-shot runs
-
-Save an applicant profile once, then run the whole flow end-to-end against any apply URL.
-
-```csharp
-// Create a reusable profile
-var profile = await client.AutoApply.CreateProfileAsync(new AutoApplyProfileRequest
-{
-    Name = "Primary",
-    FirstName = "John",
-    LastName = "Doe",
-    Email = "john@example.com",
-    Phone = "+1 555 0100",
-    WorkAuthorization = "us_citizen"
-});
-
-// Run the full auto-apply flow against a job in one call
-var run = await client.AutoApply.RunAsync(profile.Id, job.ApplyUrl);
-Console.WriteLine($"Success={run.Success} status={run.Status} fields={run.FieldsFilled}");
-
-// Manage profiles
-var all = await client.AutoApply.ListProfilesAsync();
-await client.AutoApply.UpdateProfileAsync(profile.Id, new AutoApplyProfileRequest { /* ... */ });
-await client.AutoApply.DeleteProfileAsync(profile.Id);
-```
+Not covered by this client. The Auto Apply contract is profileless and
+callback-driven, and application creation is not yet open to traffic. Call it
+over plain HTTPS — see the
+[Auto Apply reference](https://jobo.world/docs/api-reference/auto-apply/auto-apply).
 
 ---
 
 ## Error Handling
+
+`429` and `503` are retried for you with bounded backoff, honouring
+`Retry-After`. Everything else throws immediately, as a subclass of
+`JoboException`:
 
 ```csharp
 using Jobo.Enterprise.Client.Exceptions;
@@ -289,13 +297,25 @@ catch (JoboAuthenticationException)
 {
     Console.WriteLine("Invalid API key");
 }
+catch (JoboPermissionException)
+{
+    Console.WriteLine("Key is not entitled to this resource");
+}
+catch (JoboNotFoundException)
+{
+    Console.WriteLine("No such job or company");
+}
 catch (JoboRateLimitException ex)
 {
     Console.WriteLine($"Rate limited. Retry after {ex.RetryAfterSeconds}s");
 }
 catch (JoboValidationException ex)
 {
-    Console.WriteLine($"Bad request: {ex.Detail}");
+    Console.WriteLine($"Bad request: {ex.Detail} ({ex.Code})");
+}
+catch (JoboCursorRestartRequiredException)
+{
+    Console.WriteLine("Feed cursor is spent — discard it and start a new scan");
 }
 catch (JoboServerException)
 {
@@ -303,7 +323,10 @@ catch (JoboServerException)
 }
 ```
 
-## Supported ATS Sources (45+)
+Every exception carries the API's machine-readable problem `Code` when one is
+supplied, alongside `StatusCode`, `Detail`, and the raw `ResponseBody`.
+
+## Supported ATS Sources (106)
 
 | Category           | Sources                                                                                                                                       |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -313,13 +336,18 @@ catch (JoboServerException)
 | **SMB & Niche**    | `gohire`, `recooty`, `applicantpro`, `hiringthing`, `careerplug`, `hirehive`, `kula`, `careerpuck`, `talnet`, `jobscore`                      |
 | **Specialized**    | `freshteam`, `isolved`, `joincom`, `eightfold`, `phenompeople`                                                                                |
 
+The full catalogue of 106 providers is listed in the
+[API documentation](https://jobo.world/docs/sources). Treat it as an open set —
+new `provider_id` values appear as platforms are added.
+
 ## Configuration
 
-| Property  | Default                       | Description          |
-| --------- | ----------------------------- | -------------------- |
-| `ApiKey`  | _required_                    | Your API key         |
-| `BaseUrl` | `https://connect.jobo.world` | API base URL         |
-| `Timeout` | `00:00:30`                    | Request timeout      |
+| Property      | Default                      | Description                          |
+| ------------- | ---------------------------- | ------------------------------------ |
+| `ApiKey`      | _required_                   | Your API key                         |
+| `BaseUrl`     | `https://connect.jobo.world` | API base URL                         |
+| `Timeout`     | `00:00:30`                   | Request timeout                      |
+| `FeedTimeout` | `00:02:00`                   | Response timeout for the feed routes |
 
 ## Custom HttpClient
 
@@ -328,16 +356,19 @@ var httpClient = new HttpClient { BaseAddress = new Uri("https://connect.jobo.wo
 httpClient.DefaultRequestHeaders.Add("X-Api-Key", "your-api-key");
 
 var client = new JoboClient(httpClient);
-// client.Feed, client.Search, client.Companies, client.Locations, client.AutoApply are all available
+// client.Feed, client.Search, client.Companies and client.Locations are all available
 ```
+
+When you supply the `HttpClient`, its `Timeout` governs every request — set it
+to at least 120 seconds if you use the feed endpoints.
 
 ## Use Cases
 
-- **Build a job board** — Search and display jobs from 45+ ATS platforms
+- **Build a job board** — Search and display jobs from 106 ATS platforms
 - **Job aggregator** — Bulk-sync millions of listings with the feed endpoint
 - **ATS data pipeline** — Pull jobs from Greenhouse, Lever, Workday, etc. into your data warehouse
 - **Recruitment tools** — Power candidate-facing job search experiences
-- **Auto-apply automation** — Automate job applications at scale
+- **Company intelligence** — Enrich listings with funding, headcount, and tech-stack data
 - **Location intelligence** — Geocode and normalize job locations
 
 ## Target Frameworks

@@ -19,4 +19,10 @@ public sealed class JoboClientOptions
     /// Request timeout. Defaults to 30 seconds.
     /// </summary>
     public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Response timeout for the two feed endpoints, which stream up to 1,000
+    /// full job records per call. Defaults to 120 seconds.
+    /// </summary>
+    public TimeSpan FeedTimeout { get; set; } = TimeSpan.FromSeconds(120);
 }

@@ -26,6 +26,13 @@ public sealed class RangeFilter
 public sealed class JobSearchRequest
 {
     [JsonPropertyName("queries")] public List<string>? Queries { get; set; }
+
+    /// <summary>
+    /// <c>false</c> restricts matching to titles and curated alternative titles.
+    /// Defaults to <c>true</c> server-side.
+    /// </summary>
+    [JsonPropertyName("search_description")] public bool? SearchDescription { get; set; }
+
     [JsonPropertyName("locations")] public List<string>? Locations { get; set; }
     [JsonPropertyName("sources")] public List<string>? Sources { get; set; }
     [JsonPropertyName("skills")] public InclusionExclusionFilter? Skills { get; set; }
@@ -36,9 +43,23 @@ public sealed class JobSearchRequest
     [JsonPropertyName("experience_levels")] public List<string>? ExperienceLevels { get; set; }
     [JsonPropertyName("salary_usd")] public RangeFilter? SalaryUsd { get; set; }
     [JsonPropertyName("posted_after")] public DateTime? PostedAfter { get; set; }
+    [JsonPropertyName("posted_before")] public DateTime? PostedBefore { get; set; }
+    [JsonPropertyName("discovered_after")] public DateTime? DiscoveredAfter { get; set; }
+    [JsonPropertyName("discovered_before")] public DateTime? DiscoveredBefore { get; set; }
     [JsonPropertyName("page")] public int Page { get; set; } = 1;
     [JsonPropertyName("page_size")] public int PageSize { get; set; } = 25;
+
+    /// <summary>
+    /// Facets to compute. Null takes the default subset; an empty list skips
+    /// facets entirely.
+    /// </summary>
     [JsonPropertyName("include_facets")] public List<string>? IncludeFacets { get; set; }
+
+    /// <summary>
+    /// Heavy fields to keep. Null returns the whole job; an empty list returns
+    /// core fields only.
+    /// </summary>
+    [JsonPropertyName("include_fields")] public List<string>? IncludeFields { get; set; }
 }
 
 /// <summary>
